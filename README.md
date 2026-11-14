@@ -4,7 +4,8 @@
 A full-stack freelance collaboration platform built with the **MERN stack**.  
 It centralizes project posting, proposals, contracts, tasks, file sharing, real-time chat, and payments—providing a single workspace for clients and freelancers.
 
-**Live Demo:** [freelancerprojecthub.vercel.app](https://freelancerprojecthub.vercel.app)
+**Live Frontend:** [free-lancer-hub.vercel.app](https://free-lancer-hub.vercel.app)  
+**Live Backend API:** [freelancerhub-backend-edjd.onrender.com](https://freelancerhub-backend-edjd.onrender.com)
 
 ---
 
