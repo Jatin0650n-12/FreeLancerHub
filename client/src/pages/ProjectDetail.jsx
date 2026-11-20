@@ -23,6 +23,7 @@ import Deliverables from "../components/Deliverables.jsx";
 import ProjectChat from "../components/ProjectChat.jsx";
 import Billing from "../components/Billing.jsx";
 import ProposalModal from "../components/ProposalModal.jsx";
+import { useVideoCall } from "../context/VideoCallContext";
 import {
   MessageSquare,
   Clock,
@@ -39,6 +40,7 @@ import {
   FolderOpen,
   ArrowRight,
   ShieldCheck,
+  Video,
 } from "lucide-react";
 import { motion } from "framer-motion";
 
@@ -176,6 +178,7 @@ const ProjectDetail = () => {
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const { projectId } = useParams();
   const { user } = useAuth();
+  const { startVideoCall } = useVideoCall();
 
   const fetchProjectData = useCallback(async () => {
     try {
@@ -532,15 +535,24 @@ const ProjectDetail = () => {
                   )}
                 </div>
 
-                {/* Right quick launcher for chat */}
+                {/* Right quick launchers for video call & chat */}
                 {otherParticipant && (
-                  <button
-                    onClick={() => setIsChatOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
-                  >
-                    <MessageSquare size={15} />
-                    <span>Chat with {otherParticipant.name}</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => startVideoCall(otherParticipant, project._id)}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white shadow-xs shadow-blue-500/25 transition-all hover:scale-[1.02] cursor-pointer"
+                    >
+                      <Video size={15} />
+                      <span>Start Video Call</span>
+                    </button>
+                    <button
+                      onClick={() => setIsChatOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+                    >
+                      <MessageSquare size={15} />
+                      <span>Chat</span>
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

@@ -26,6 +26,8 @@ import PrivacyPage from './pages/PrivacyPage';
 import RefundPolicyPage from './pages/RefundPolicyPage';
 import ContactPage from './pages/ContactPage';
 
+import { VideoCallProvider } from "./context/VideoCallContext";
+
 const DashboardRedirect = () => {
   const { user, loading } = useAuth();
   if (loading) return <div>Loading...</div>;
@@ -36,7 +38,7 @@ const DashboardRedirect = () => {
 
 const App = () => {
   return (
-    <>
+    <VideoCallProvider>
       <Routes>
         <Route path="/" element={<PublicRoute><Landing /></PublicRoute>} />
         <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
@@ -68,7 +70,7 @@ const App = () => {
         <Route path="*" element={<h1>404 Not Found</h1>} />
       </Routes>
       <ToastContainer position="top-center" autoClose={3000} />
-    </>
+    </VideoCallProvider>
   );
 };
 

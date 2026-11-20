@@ -72,6 +72,35 @@ export function initSocket(httpServer) {
       }
     });
 
+    // --- WebRTC Video & Screen Sharing Signaling ---
+    socket.on('webrtc_call_user', ({ recipientId, projectId, offer, caller }) => {
+      console.log(`[WebRTC] Call initiated from ${caller?.name} to recipient ${recipientId}`);
+      io.to(recipientId).emit('webrtc_incoming_call', {
+        caller,
+        projectId,
+        offer,
+      });
+    });
+
+    socket.on('webrtc_answer_call', ({ callerId, answer }) => {
+      console.log(`[WebRTC] Call answered for caller ${callerId}`);
+      io.to(callerId).emit('webrtc_call_answered', { answer });
+    });
+
+    socket.on('webrtc_ice_candidate', ({ targetId, candidate }) => {
+      io.to(targetId).emit('webrtc_ice_candidate', { candidate });
+    });
+
+    socket.on('webrtc_end_call', ({ targetId }) => {
+      console.log(`[WebRTC] Call ended for target ${targetId}`);
+      io.to(targetId).emit('webrtc_call_ended');
+    });
+
+    socket.on('webrtc_reject_call', ({ callerId }) => {
+      console.log(`[WebRTC] Call rejected for caller ${callerId}`);
+      io.to(callerId).emit('webrtc_call_rejected');
+    });
+
     socket.on('disconnect', () => {
       console.log(`[Socket] ❌ User disconnected. Total clients: ${io.sockets.sockets.size}`);
     });
