@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { socket } from '../services/socket';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-toastify';
@@ -35,6 +35,7 @@ const VideoCallModal = ({
   isIncomingCall = false,
   incomingOffer = null,
   callerInfo = null,
+  initialIceCandidates = [],
 }) => {
   const { user } = useAuth();
   const [callStatus, setCallStatus] = useState(isIncomingCall ? 'incoming' : 'calling');
@@ -44,17 +45,25 @@ const VideoCallModal = ({
   const [isMinimized, setIsMinimized] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
 
+  // Media Streams in React State
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const peerRef = useRef(null);
   const localStreamRef = useRef(null);
   const screenTrackRef = useRef(null);
   const timerRef = useRef(null);
-  const iceCandidatesQueue = useRef([]);
+  const audioCtxRef = useRef(null);
+
+  const iceCandidatesQueue = useRef(Array.isArray(initialIceCandidates) ? [...initialIceCandidates] : []);
+  const processedCandidates = useRef(new Set());
 
   const targetId = targetUser?._id ? String(targetUser._id) : (targetUser ? String(targetUser) : null);
   const callerId = callerInfo?._id ? String(callerInfo._id) : (callerInfo ? String(callerInfo) : null);
   const peerId = isIncomingCall ? callerId : targetId;
+  const partner = isIncomingCall ? callerInfo : targetUser;
 
   // Gentle incoming ring chime
   useEffect(() => {
@@ -64,9 +73,10 @@ const VideoCallModal = ({
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         if (AudioCtx) {
           const audioCtx = new AudioCtx();
+          audioCtxRef.current = audioCtx;
           const playChime = () => {
             if (audioCtx.state === 'suspended') {
-              audioCtx.resume();
+              audioCtx.resume().catch(() => {});
             }
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
@@ -88,7 +98,16 @@ const VideoCallModal = ({
       }
       return () => {
         if (ringInterval) clearInterval(ringInterval);
+        if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+          audioCtxRef.current.close().catch(() => {});
+          audioCtxRef.current = null;
+        }
       };
+    } else {
+      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+        audioCtxRef.current.close().catch(() => {});
+        audioCtxRef.current = null;
+      }
     }
   }, [callStatus]);
 
@@ -107,6 +126,55 @@ const VideoCallModal = ({
     };
   }, [callStatus]);
 
+  // Immediate callback ref setters for video elements to guarantee stream attachment on DOM mount
+  const setLocalVideoRef = useCallback((el) => {
+    localVideoRef.current = el;
+    if (el && localStream) {
+      if (el.srcObject !== localStream) {
+        el.srcObject = localStream;
+      }
+      el.muted = true;
+      el.play().catch(() => {});
+    }
+  }, [localStream]);
+
+  const setRemoteVideoRef = useCallback((el) => {
+    remoteVideoRef.current = el;
+    if (el && remoteStream) {
+      if (el.srcObject !== remoteStream) {
+        el.srcObject = remoteStream;
+      }
+      el.play().catch(() => {});
+    }
+  }, [remoteStream]);
+
+  // Synchronize local stream to video element whenever state or modal view changes
+  useEffect(() => {
+    const videoEl = localVideoRef.current;
+    if (videoEl && localStream) {
+      if (videoEl.srcObject !== localStream) {
+        videoEl.srcObject = localStream;
+      }
+      videoEl.muted = true;
+      videoEl.play().catch((err) => {
+        console.warn('[WebRTC] Local video play error:', err);
+      });
+    }
+  }, [localStream, callStatus, isMinimized, isVideoOff]);
+
+  // Synchronize remote stream to video element whenever state or modal view changes
+  useEffect(() => {
+    const videoEl = remoteVideoRef.current;
+    if (videoEl && remoteStream) {
+      if (videoEl.srcObject !== remoteStream) {
+        videoEl.srcObject = remoteStream;
+      }
+      videoEl.play().catch((err) => {
+        console.warn('[WebRTC] Remote video play error:', err);
+      });
+    }
+  }, [remoteStream, callStatus, isMinimized]);
+
   const cleanupCall = () => {
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -121,7 +189,14 @@ const VideoCallModal = ({
       peerRef.current = null;
     }
     iceCandidatesQueue.current = [];
+    processedCandidates.current.clear();
+    setLocalStream(null);
+    setRemoteStream(null);
     if (timerRef.current) clearInterval(timerRef.current);
+    if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
     setCallStatus('idle');
     setIsScreenSharing(false);
   };
@@ -142,13 +217,26 @@ const VideoCallModal = ({
     onClose();
   };
 
+  const getCandidateKey = (candidate) => {
+    if (!candidate) return '';
+    return candidate.candidate || `${candidate.sdpMid}-${candidate.sdpMLineIndex}`;
+  };
+
   const flushQueuedIceCandidates = async (peer) => {
     while (iceCandidatesQueue.current.length > 0) {
       const candidate = iceCandidatesQueue.current.shift();
+      if (!candidate || !candidate.candidate) continue;
+      const key = getCandidateKey(candidate);
+      if (processedCandidates.current.has(key)) continue;
+      processedCandidates.current.add(key);
       try {
         await peer.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (err) {
-        console.warn('[WebRTC] Error adding queued ICE candidate:', err);
+        try {
+          await peer.addIceCandidate(candidate);
+        } catch (e) {
+          console.warn('[WebRTC] Error adding queued ICE candidate:', err);
+        }
       }
     }
   };
@@ -169,13 +257,21 @@ const VideoCallModal = ({
     };
 
     const handleIceCandidate = async ({ candidate }) => {
-      if (!candidate) return;
+      if (!candidate || !candidate.candidate) return;
+      const key = getCandidateKey(candidate);
+      if (processedCandidates.current.has(key)) return;
+
       const peer = peerRef.current;
       if (peer && peer.remoteDescription && peer.remoteDescription.type) {
+        processedCandidates.current.add(key);
         try {
           await peer.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (err) {
-          console.error('[WebRTC] Error adding ICE candidate:', err);
+          try {
+            await peer.addIceCandidate(candidate);
+          } catch (e) {
+            console.error('[WebRTC] Error adding ICE candidate:', err);
+          }
         }
       } else {
         iceCandidatesQueue.current.push(candidate);
@@ -245,9 +341,7 @@ const VideoCallModal = ({
         }
 
         localStreamRef.current = stream;
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
+        setLocalStream(stream);
 
         const peer = new RTCPeerConnection(ICE_SERVERS);
         peerRef.current = peer;
@@ -255,9 +349,15 @@ const VideoCallModal = ({
         stream.getTracks().forEach((track) => peer.addTrack(track, stream));
 
         peer.ontrack = (event) => {
-          console.log('[WebRTC] Received remote stream track');
-          if (remoteVideoRef.current && event.streams[0]) {
-            remoteVideoRef.current.srcObject = event.streams[0];
+          console.log('[WebRTC] Received remote stream track:', event.track.kind);
+          if (event.streams && event.streams[0]) {
+            setRemoteStream(event.streams[0]);
+          } else {
+            setRemoteStream((prev) => {
+              const s = prev || new MediaStream();
+              s.addTrack(event.track);
+              return s;
+            });
           }
         };
 
@@ -267,6 +367,20 @@ const VideoCallModal = ({
               targetId,
               candidate: event.candidate,
             });
+          }
+        };
+
+        peer.onconnectionstatechange = () => {
+          console.log('[WebRTC] Connection state:', peer.connectionState);
+          if (peer.connectionState === 'connected') {
+            setCallStatus('connected');
+          }
+        };
+
+        peer.oniceconnectionstatechange = () => {
+          console.log('[WebRTC] ICE connection state:', peer.iceConnectionState);
+          if (peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed') {
+            setCallStatus('connected');
           }
         };
 
@@ -327,9 +441,7 @@ const VideoCallModal = ({
       }
 
       localStreamRef.current = stream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
+      setLocalStream(stream);
 
       const peer = new RTCPeerConnection(ICE_SERVERS);
       peerRef.current = peer;
@@ -337,9 +449,15 @@ const VideoCallModal = ({
       stream.getTracks().forEach((track) => peer.addTrack(track, stream));
 
       peer.ontrack = (event) => {
-        console.log('[WebRTC] Received remote track on answer');
-        if (remoteVideoRef.current && event.streams[0]) {
-          remoteVideoRef.current.srcObject = event.streams[0];
+        console.log('[WebRTC] Received remote track on answer:', event.track.kind);
+        if (event.streams && event.streams[0]) {
+          setRemoteStream(event.streams[0]);
+        } else {
+          setRemoteStream((prev) => {
+            const s = prev || new MediaStream();
+            s.addTrack(event.track);
+            return s;
+          });
         }
       };
 
@@ -349,6 +467,20 @@ const VideoCallModal = ({
             targetId: callerId,
             candidate: event.candidate,
           });
+        }
+      };
+
+      peer.onconnectionstatechange = () => {
+        console.log('[WebRTC] Connection state:', peer.connectionState);
+        if (peer.connectionState === 'connected') {
+          setCallStatus('connected');
+        }
+      };
+
+      peer.oniceconnectionstatechange = () => {
+        console.log('[WebRTC] ICE connection state:', peer.iceConnectionState);
+        if (peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed') {
+          setCallStatus('connected');
         }
       };
 
@@ -406,10 +538,8 @@ const VideoCallModal = ({
         if (sender) {
           await sender.replaceTrack(camTrack);
         }
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = camStream;
-        }
         localStreamRef.current = camStream;
+        setLocalStream(camStream);
         setIsScreenSharing(false);
       } catch (err) {
         console.error('Error reverting to camera:', err);
@@ -430,9 +560,8 @@ const VideoCallModal = ({
           await sender.replaceTrack(screenTrack);
         }
 
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = screenStream;
-        }
+        localStreamRef.current = screenStream;
+        setLocalStream(screenStream);
 
         screenTrack.onended = () => {
           toggleScreenShare();
@@ -452,8 +581,6 @@ const VideoCallModal = ({
   };
 
   if (!isOpen) return null;
-
-  const partner = isIncomingCall ? callerInfo : targetUser;
 
   // --- INCOMING CALL PROMPT MODAL ---
   if (callStatus === 'incoming') {
@@ -542,7 +669,7 @@ const VideoCallModal = ({
       <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white rounded-3xl p-3 shadow-2xl border border-slate-800 flex items-center gap-3 w-72">
         <div className="w-12 h-12 rounded-2xl bg-slate-800 overflow-hidden relative shrink-0">
           <video
-            ref={remoteVideoRef}
+            ref={setRemoteVideoRef}
             autoPlay
             playsInline
             className="w-full h-full object-cover"
@@ -595,6 +722,8 @@ const VideoCallModal = ({
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                     Connected • {formatTime(callDuration)}
                   </span>
+                ) : callStatus === 'connecting' ? (
+                  <span className="text-blue-400 animate-pulse">Connecting media stream...</span>
                 ) : (
                   <span className="text-amber-400 animate-pulse">Ringing collaborator...</span>
                 )}
@@ -617,7 +746,7 @@ const VideoCallModal = ({
         <div className="flex-1 relative bg-black p-4 flex items-center justify-center overflow-hidden">
           {/* Remote Video (Main screen) */}
           <video
-            ref={remoteVideoRef}
+            ref={setRemoteVideoRef}
             autoPlay
             playsInline
             className="w-full h-full object-contain rounded-2xl"
@@ -629,8 +758,16 @@ const VideoCallModal = ({
                 {partner?.name?.charAt(0) || 'U'}
               </div>
               <div>
-                <p className="text-lg font-bold text-white">Calling {partner?.name || 'User'}...</p>
-                <p className="text-xs text-slate-400 mt-1">Waiting for them to connect camera & mic</p>
+                <p className="text-lg font-bold text-white">
+                  {callStatus === 'connecting'
+                    ? `Connecting to ${partner?.name || 'Collaborator'}...`
+                    : `Calling ${partner?.name || 'User'}...`}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  {callStatus === 'connecting'
+                    ? 'Negotiating media connection and encryption'
+                    : 'Waiting for them to connect camera & mic'}
+                </p>
               </div>
             </div>
           )}
@@ -638,7 +775,7 @@ const VideoCallModal = ({
           {/* Local Video (Floating corner) */}
           <div className="absolute bottom-6 right-6 w-36 sm:w-48 aspect-video bg-slate-800 rounded-2xl overflow-hidden border-2 border-slate-700 shadow-xl z-20">
             <video
-              ref={localVideoRef}
+              ref={setLocalVideoRef}
               autoPlay
               playsInline
               muted
