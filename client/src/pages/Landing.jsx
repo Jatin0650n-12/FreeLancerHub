@@ -1,6 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
+import PublicFooter from "../components/PublicFooter";
 import {
   ArrowRight,
   CheckCircle2,
@@ -343,6 +344,9 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+
+      {/* Mandatory Compliance Footer for Razorpay / RBI verification */}
+      <PublicFooter />
     </div>
   );
 }

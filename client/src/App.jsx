@@ -21,6 +21,10 @@ import NotificationsPage from "./pages/NotificationsPage.jsx";
 import FindWorkPage from "./pages/FindWorkPage.jsx";
 import SearchResultsPage from "./pages/SearchResultsPage.jsx";
 import MessagesPage from './pages/MessagesPage';
+import TermsPage from './pages/TermsPage';
+import PrivacyPage from './pages/PrivacyPage';
+import RefundPolicyPage from './pages/RefundPolicyPage';
+import ContactPage from './pages/ContactPage';
 
 const DashboardRedirect = () => {
   const { user, loading } = useAuth();
@@ -37,6 +41,10 @@ const App = () => {
         <Route path="/" element={<PublicRoute><Landing /></PublicRoute>} />
         <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
         <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+        <Route path="/terms" element={<TermsPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/refund-policy" element={<RefundPolicyPage />} />
+        <Route path="/contact" element={<ContactPage />} />
 
         <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
           
