@@ -1,7 +1,12 @@
 import React, { createContext, useState, useEffect, useContext } from "react";
 import axios from "axios";
 
-axios.defaults.baseURL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+const API_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.PROD
+    ? "https://freelancerhub-backend-edjd.onrender.com"
+    : "http://localhost:5001");
+axios.defaults.baseURL = API_URL;
 
 const AuthContext = createContext();
 

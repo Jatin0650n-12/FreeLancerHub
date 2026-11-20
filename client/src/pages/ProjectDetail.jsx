@@ -235,7 +235,10 @@ const ProjectDetail = () => {
       }
 
       const options = {
-        key: orderData.keyId || import.meta.env.VITE_RAZORPAY_KEY_ID,
+        key:
+          orderData.keyId ||
+          import.meta.env.VITE_RAZORPAY_KEY_ID ||
+          "rzp_test_U03VsdhlsnDcGo",
         amount: orderData.amount,
         currency: orderData.currency || "INR",
         name: "Freelancer Project Hub",

@@ -4,7 +4,11 @@ import { getDeliverablesForProject, uploadDeliverable } from '../services/api';
 import { toast } from 'react-toastify';
 import axios from 'axios';
 
-const backendUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+const backendUrl =
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.PROD
+    ? "https://freelancerhub-backend-edjd.onrender.com"
+    : "http://localhost:5001");
 
 const Deliverables = ({ project }) => {
   const [deliverables, setDeliverables] = useState([]);
