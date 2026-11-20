@@ -14,6 +14,7 @@ import {
   PhoneCall,
   User,
   ShieldCheck,
+  AlertCircle,
 } from 'lucide-react';
 
 const ICE_SERVERS = {
@@ -21,6 +22,8 @@ const ICE_SERVERS = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
   ],
 };
 
@@ -47,6 +50,47 @@ const VideoCallModal = ({
   const localStreamRef = useRef(null);
   const screenTrackRef = useRef(null);
   const timerRef = useRef(null);
+  const iceCandidatesQueue = useRef([]);
+
+  const targetId = targetUser?._id ? String(targetUser._id) : (targetUser ? String(targetUser) : null);
+  const callerId = callerInfo?._id ? String(callerInfo._id) : (callerInfo ? String(callerInfo) : null);
+  const peerId = isIncomingCall ? callerId : targetId;
+
+  // Gentle incoming ring chime
+  useEffect(() => {
+    if (callStatus === 'incoming') {
+      let ringInterval;
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) {
+          const audioCtx = new AudioCtx();
+          const playChime = () => {
+            if (audioCtx.state === 'suspended') {
+              audioCtx.resume();
+            }
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(520, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.3);
+            gain.gain.setValueAtTime(0.06, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.6);
+          };
+          playChime();
+          ringInterval = setInterval(playChime, 2500);
+        }
+      } catch (e) {
+        // Silently catch audio gesture constraints
+      }
+      return () => {
+        if (ringInterval) clearInterval(ringInterval);
+      };
+    }
+  }, [callStatus]);
 
   // Call duration counter
   useEffect(() => {
@@ -63,7 +107,6 @@ const VideoCallModal = ({
     };
   }, [callStatus]);
 
-  // Clean cleanup function
   const cleanupCall = () => {
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -77,13 +120,13 @@ const VideoCallModal = ({
       peerRef.current.close();
       peerRef.current = null;
     }
+    iceCandidatesQueue.current = [];
     if (timerRef.current) clearInterval(timerRef.current);
     setCallStatus('idle');
     setIsScreenSharing(false);
   };
 
   const endCall = () => {
-    const peerId = targetUser?._id || callerInfo?._id;
     if (peerId) {
       socket.emit('webrtc_end_call', { targetId: peerId });
     }
@@ -92,11 +135,22 @@ const VideoCallModal = ({
   };
 
   const rejectCall = () => {
-    if (callerInfo?._id) {
-      socket.emit('webrtc_reject_call', { callerId: callerInfo._id });
+    if (callerId) {
+      socket.emit('webrtc_reject_call', { callerId });
     }
     cleanupCall();
     onClose();
+  };
+
+  const flushQueuedIceCandidates = async (peer) => {
+    while (iceCandidatesQueue.current.length > 0) {
+      const candidate = iceCandidatesQueue.current.shift();
+      try {
+        await peer.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.warn('[WebRTC] Error adding queued ICE candidate:', err);
+      }
+    }
   };
 
   // Socket event listeners
@@ -106,6 +160,7 @@ const VideoCallModal = ({
       if (peerRef.current && peerRef.current.signalingState !== 'closed') {
         try {
           await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+          await flushQueuedIceCandidates(peerRef.current);
           setCallStatus('connected');
         } catch (err) {
           console.error('[WebRTC] Error setting remote description:', err);
@@ -114,17 +169,21 @@ const VideoCallModal = ({
     };
 
     const handleIceCandidate = async ({ candidate }) => {
-      if (peerRef.current && candidate) {
+      if (!candidate) return;
+      const peer = peerRef.current;
+      if (peer && peer.remoteDescription && peer.remoteDescription.type) {
         try {
-          await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+          await peer.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (err) {
           console.error('[WebRTC] Error adding ICE candidate:', err);
         }
+      } else {
+        iceCandidatesQueue.current.push(candidate);
       }
     };
 
     const handleCallEnded = () => {
-      toast.info('The other party ended the call.');
+      toast.info('The call has ended.');
       cleanupCall();
       onClose();
     };
@@ -135,30 +194,56 @@ const VideoCallModal = ({
       onClose();
     };
 
+    const handleUserOffline = () => {
+      toast.warning(`${partner?.name || 'User'} is currently offline.`);
+      setCallStatus('offline');
+    };
+
     socket.on('webrtc_call_answered', handleCallAnswered);
     socket.on('webrtc_ice_candidate', handleIceCandidate);
     socket.on('webrtc_call_ended', handleCallEnded);
     socket.on('webrtc_call_rejected', handleCallRejected);
+    socket.on('webrtc_user_offline', handleUserOffline);
 
     return () => {
       socket.off('webrtc_call_answered', handleCallAnswered);
       socket.off('webrtc_ice_candidate', handleIceCandidate);
       socket.off('webrtc_call_ended', handleCallEnded);
       socket.off('webrtc_call_rejected', handleCallRejected);
+      socket.off('webrtc_user_offline', handleUserOffline);
     };
-  }, [onClose]);
+  }, [onClose, partner?.name]);
 
   // Initiate Outgoing Call
   useEffect(() => {
-    if (!isOpen || isIncomingCall || !targetUser) return;
+    if (!isOpen || isIncomingCall || !targetId) return;
 
     const startCall = async () => {
       try {
         setCallStatus('calling');
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
-        });
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true,
+          });
+        } catch (camErr) {
+          console.warn('[WebRTC] Camera access failed, attempting audio only:', camErr);
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: false,
+              audio: true,
+            });
+            setIsVideoOff(true);
+            toast.info('Camera unavailable. Starting audio call.');
+          } catch (micErr) {
+            console.error('[WebRTC] Media access denied:', micErr);
+            toast.error('Could not access camera/microphone. Please allow browser permissions.');
+            endCall();
+            return;
+          }
+        }
+
         localStreamRef.current = stream;
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
@@ -177,9 +262,9 @@ const VideoCallModal = ({
         };
 
         peer.onicecandidate = (event) => {
-          if (event.candidate) {
+          if (event.candidate && targetId) {
             socket.emit('webrtc_ice_candidate', {
-              targetId: targetUser._id,
+              targetId,
               candidate: event.candidate,
             });
           }
@@ -188,20 +273,21 @@ const VideoCallModal = ({
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
 
+        console.log(`[WebRTC] Emitting webrtc_call_user to recipient: ${targetId}`);
         socket.emit('webrtc_call_user', {
-          recipientId: targetUser._id,
+          recipientId: targetId,
           projectId,
           offer,
           caller: {
-            _id: user._id,
+            _id: String(user._id),
             name: user.name,
             profilePictureUrl: user.profilePictureUrl,
             role: user.role,
           },
         });
       } catch (err) {
-        console.error('[WebRTC] Camera/Mic access denied or error:', err);
-        toast.error('Could not access camera/microphone. Please allow browser permissions.');
+        console.error('[WebRTC] Call setup error:', err);
+        toast.error('Could not initiate call.');
         endCall();
       }
     };
@@ -211,16 +297,35 @@ const VideoCallModal = ({
     return () => {
       cleanupCall();
     };
-  }, [isOpen, isIncomingCall]);
+  }, [isOpen, isIncomingCall, targetId]);
 
   // Answer Incoming Call
   const answerCall = async () => {
     try {
       setCallStatus('connecting');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        });
+      } catch (camErr) {
+        console.warn('[WebRTC] Answering: camera unavailable, falling back to audio:', camErr);
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: false,
+            audio: true,
+          });
+          setIsVideoOff(true);
+          toast.info('Camera unavailable. Answering audio-only.');
+        } catch (micErr) {
+          console.error('[WebRTC] Microphone access denied:', micErr);
+          toast.error('Could not access microphone.');
+          endCall();
+          return;
+        }
+      }
+
       localStreamRef.current = stream;
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
@@ -232,27 +337,29 @@ const VideoCallModal = ({
       stream.getTracks().forEach((track) => peer.addTrack(track, stream));
 
       peer.ontrack = (event) => {
-        console.log('[WebRTC] Received remote stream track on answer');
+        console.log('[WebRTC] Received remote track on answer');
         if (remoteVideoRef.current && event.streams[0]) {
           remoteVideoRef.current.srcObject = event.streams[0];
         }
       };
 
       peer.onicecandidate = (event) => {
-        if (event.candidate && callerInfo?._id) {
+        if (event.candidate && callerId) {
           socket.emit('webrtc_ice_candidate', {
-            targetId: callerInfo._id,
+            targetId: callerId,
             candidate: event.candidate,
           });
         }
       };
 
       await peer.setRemoteDescription(new RTCSessionDescription(incomingOffer));
+      await flushQueuedIceCandidates(peer);
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
 
+      console.log(`[WebRTC] Emitting webrtc_answer_call to caller: ${callerId}`);
       socket.emit('webrtc_answer_call', {
-        callerId: callerInfo._id,
+        callerId,
         answer,
       });
 
@@ -264,7 +371,6 @@ const VideoCallModal = ({
     }
   };
 
-  // Toggle Microphone
   const toggleMic = () => {
     if (localStreamRef.current) {
       const audioTrack = localStreamRef.current.getAudioTracks()[0];
@@ -275,7 +381,6 @@ const VideoCallModal = ({
     }
   };
 
-  // Toggle Camera Video
   const toggleVideo = () => {
     if (localStreamRef.current) {
       const videoTrack = localStreamRef.current.getVideoTracks()[0];
@@ -286,10 +391,8 @@ const VideoCallModal = ({
     }
   };
 
-  // Toggle Screen Sharing
   const toggleScreenShare = async () => {
     if (isScreenSharing) {
-      // Revert to camera video
       if (screenTrackRef.current) {
         screenTrackRef.current.stop();
         screenTrackRef.current = null;
@@ -312,7 +415,6 @@ const VideoCallModal = ({
         console.error('Error reverting to camera:', err);
       }
     } else {
-      // Start screen capture
       try {
         const screenStream = await navigator.mediaDevices.getDisplayMedia({
           video: { cursor: 'always' },
@@ -333,7 +435,7 @@ const VideoCallModal = ({
         }
 
         screenTrack.onended = () => {
-          toggleScreenShare(); // auto revert when user clicks browser "Stop sharing"
+          toggleScreenShare();
         };
 
         setIsScreenSharing(true);
@@ -376,7 +478,7 @@ const VideoCallModal = ({
           </div>
 
           <div>
-            <h3 className="text-xl font-extrabold text-slate-900">{partner?.name}</h3>
+            <h3 className="text-xl font-extrabold text-slate-900">{partner?.name || 'User'}</h3>
             <p className="text-xs text-blue-600 font-semibold uppercase tracking-wider mt-1">
               Incoming Video Call...
             </p>
@@ -406,6 +508,34 @@ const VideoCallModal = ({
     );
   }
 
+  // --- RECIPIENT OFFLINE SCREEN ---
+  if (callStatus === 'offline') {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl text-center space-y-5 border border-slate-100">
+          <div className="w-16 h-16 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mx-auto">
+            <AlertCircle size={32} />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-slate-900">{partner?.name || 'User'} is Offline</h3>
+            <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+              They are not currently active on FreelancerHub. You can send them a direct message or try again later.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              cleanupCall();
+              onClose();
+            }}
+            className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
+          >
+            Close Call
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // --- MINIMIZED FLOATING WINDOW ---
   if (isMinimized) {
     return (
@@ -419,7 +549,7 @@ const VideoCallModal = ({
           />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="font-bold text-xs truncate">{partner?.name}</p>
+          <p className="font-bold text-xs truncate">{partner?.name || 'Collaborator'}</p>
           <span className="text-[10px] text-emerald-400 font-medium">
             {callStatus === 'connected' ? formatTime(callDuration) : 'Calling...'}
           </span>
@@ -454,7 +584,7 @@ const VideoCallModal = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-bold text-sm text-white">{partner?.name}</h3>
+                <h3 className="font-bold text-sm text-white">{partner?.name || 'Collaborator'}</h3>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                   <ShieldCheck size={11} /> 256-bit P2P Encrypted
                 </span>
@@ -499,7 +629,7 @@ const VideoCallModal = ({
                 {partner?.name?.charAt(0) || 'U'}
               </div>
               <div>
-                <p className="text-lg font-bold text-white">Calling {partner?.name}...</p>
+                <p className="text-lg font-bold text-white">Calling {partner?.name || 'User'}...</p>
                 <p className="text-xs text-slate-400 mt-1">Waiting for them to connect camera & mic</p>
               </div>
             </div>

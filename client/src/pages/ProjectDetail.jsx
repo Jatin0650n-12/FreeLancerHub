@@ -370,10 +370,17 @@ const ProjectDetail = () => {
     );
   }
 
+  const clientId = project.client?._id ? String(project.client._id) : (project.client ? String(project.client) : null);
+  const freelancerId = project.freelancer?._id ? String(project.freelancer._id) : (project.freelancer ? String(project.freelancer) : null);
+  const currentUserId = user?._id ? String(user._id) : null;
+
   const isProjectParticipant =
-    user && (user._id === project.client?._id || user._id === project.freelancer?._id);
-  const otherParticipant =
-    user?._id === project.client?._id ? project.freelancer : project.client;
+    Boolean(currentUserId && (currentUserId === clientId || currentUserId === freelancerId));
+  
+  const rawOther = currentUserId === clientId ? project.freelancer : project.client;
+  const otherParticipant = typeof rawOther === 'object' && rawOther !== null
+    ? rawOther
+    : rawOther ? { _id: rawOther, name: 'Collaborator' } : null;
   const myReview = reviews.find((r) => r.reviewer?._id === user?._id);
   const reviewOfMe = reviews.find(
     (r) => r.reviewee === user?._id && r.project === projectId

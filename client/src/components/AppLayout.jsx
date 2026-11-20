@@ -7,7 +7,7 @@ import {
   Link,
 } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { socket } from "../services/socket";
+import { socket, setSocketUser } from "../services/socket";
 import {
   Home,
   Briefcase,
@@ -59,12 +59,13 @@ const AppLayout = () => {
   }, []);
 
   useEffect(() => {
-    if (!user) {
-      if (socket.connected) socket.disconnect();
+    if (!user?._id) {
+      setSocketUser(null);
       return;
     }
-    socket.connect();
-    socket.on("connect", () => socket.emit("authenticate", user._id));
+    
+    // Ensure persistent authenticated socket
+    setSocketUser(user._id);
 
     const fetchInitialCounts = async () => {
       try {
@@ -82,7 +83,7 @@ const AppLayout = () => {
     };
 
     const handleNewMessage = () => {
-      if (!location.pathname.startsWith("/messages")) {
+      if (!window.location.pathname.startsWith("/messages")) {
         setMessageCount((prev) => prev + 1);
       }
     };
@@ -91,12 +92,10 @@ const AppLayout = () => {
     socket.on("newMessageNotification", handleNewMessage);
 
     return () => {
-      if (socket.connected) socket.disconnect();
-      socket.off("connect");
       socket.off("newNotification", handleNewNotification);
       socket.off("newMessageNotification", handleNewMessage);
     };
-  }, [user, location.pathname]);
+  }, [user?._id]);
 
   useEffect(() => {
     const clearBadgesOnVisit = async () => {
@@ -323,6 +322,7 @@ const AppLayout = () => {
                         <button
                           onClick={() => {
                             setIsProfileMenuOpen(false);
+                            setSocketUser(null);
                             logout();
                             navigate("/login");
                           }}
@@ -430,6 +430,7 @@ const AppLayout = () => {
                 </Link>
                 <button
                   onClick={() => {
+                    setSocketUser(null);
                     logout();
                     navigate("/login");
                   }}

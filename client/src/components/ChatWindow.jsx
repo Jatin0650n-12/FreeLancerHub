@@ -118,7 +118,26 @@ const ChatWindow = ({ conversation }) => {
     setNewMessage(text);
   };
 
-  const otherParticipant = conversation?.participants?.find((p) => p._id !== user._id);
+  const rawParticipant = conversation?.participants?.find((p) => {
+    const pId = typeof p === 'object' && p !== null ? p._id : p;
+    return String(pId) !== String(user?._id);
+  });
+
+  const otherParticipant =
+    typeof rawParticipant === 'object' && rawParticipant !== null
+      ? rawParticipant
+      : rawParticipant
+      ? { _id: rawParticipant, name: 'Collaborator' }
+      : null;
+
+  const handleStartCall = () => {
+    if (!otherParticipant?._id) {
+      toast.error('Recipient could not be identified for video call.');
+      return;
+    }
+    console.log('[ChatWindow] Initiating call to:', otherParticipant);
+    startVideoCall(otherParticipant);
+  };
 
   if (loading) {
     return (
@@ -176,9 +195,9 @@ const ChatWindow = ({ conversation }) => {
         <div className="flex items-center gap-2">
           {otherParticipant && (
             <button
-              onClick={() => startVideoCall(otherParticipant)}
-              className="px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
-              title="Start 1-Click Video Call"
+              onClick={handleStartCall}
+              className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs shadow-blue-500/25 hover:scale-105 cursor-pointer"
+              title={`Call ${otherParticipant.name || 'collaborator'}`}
             >
               <Video size={15} />
               <span>Call</span>

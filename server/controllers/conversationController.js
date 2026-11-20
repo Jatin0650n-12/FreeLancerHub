@@ -53,7 +53,7 @@ export const startConversation = async (req, res) => {
 
         let conversation = await Conversation.findOne({
             participants: { $all: [senderId, recipientId] },
-        });
+        }).populate('participants', 'name profilePictureUrl');
 
         if (conversation) {
             return res.status(200).json(conversation);
@@ -64,6 +64,7 @@ export const startConversation = async (req, res) => {
         });
 
         await conversation.save();
+        conversation = await Conversation.findById(conversation._id).populate('participants', 'name profilePictureUrl');
         res.status(201).json(conversation);
 
     } catch (err) {

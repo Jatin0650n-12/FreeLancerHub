@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { socket } from '../services/socket';
+import { socket, setSocketUser } from '../services/socket';
 import { useAuth } from './AuthContext';
 import VideoCallModal from '../components/VideoCallModal';
 
@@ -23,13 +23,16 @@ export const VideoCallProvider = ({ children }) => {
   const [callerInfo, setCallerInfo] = useState(null);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user?._id) return;
+
+    // Ensure socket is connected and authenticated in user's room
+    setSocketUser(user._id);
 
     const handleIncomingCall = (data) => {
       console.log('[WebRTC] Received incoming call:', data);
       setCallerInfo(data.caller);
       setIncomingOffer(data.offer);
-      setProjectId(data.projectId);
+      setProjectId(data.projectId || null);
       setIsIncomingCall(true);
       setIsCallOpen(true);
     };
@@ -39,10 +42,16 @@ export const VideoCallProvider = ({ children }) => {
     return () => {
       socket.off('webrtc_incoming_call', handleIncomingCall);
     };
-  }, [user]);
+  }, [user?._id]);
 
   const startVideoCall = (recipient, pId = null) => {
-    setTargetUser(recipient);
+    if (!recipient) return;
+    const normalized = typeof recipient === 'object' && recipient !== null
+      ? recipient
+      : { _id: recipient, name: 'Collaborator' };
+
+    console.log('[WebRTC] Starting call to:', normalized);
+    setTargetUser(normalized);
     setProjectId(pId);
     setIsIncomingCall(false);
     setIncomingOffer(null);
@@ -59,11 +68,16 @@ export const VideoCallProvider = ({ children }) => {
     setCallerInfo(null);
   };
 
+  const callSessionKey = isIncomingCall
+    ? `inc-${callerInfo?._id || 'peer'}-${incomingOffer?.sdp?.length || 0}`
+    : `out-${targetUser?._id || 'peer'}`;
+
   return (
     <VideoCallContext.Provider value={{ startVideoCall, closeVideoCall }}>
       {children}
       {isCallOpen && (
         <VideoCallModal
+          key={callSessionKey}
           isOpen={isCallOpen}
           onClose={closeVideoCall}
           targetUser={targetUser}
