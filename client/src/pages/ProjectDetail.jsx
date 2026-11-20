@@ -159,6 +159,79 @@ const ReviewDisplayCard = ({ title, review }) => {
   );
 };
 
+const ProjectProgressStepper = ({ project, invoice }) => {
+  const steps = [
+    { label: "Job Posted", status: "completed", desc: "Scope & budget defined" },
+    {
+      label: "Proposal Accepted",
+      status: project.status === "open" ? "current" : "completed",
+      desc: project.freelancer ? `Hired ${project.freelancer.name}` : "Awaiting selection",
+    },
+    {
+      label: "Active Collaboration",
+      status:
+        project.status === "open"
+          ? "upcoming"
+          : project.status === "in-progress"
+          ? "current"
+          : "completed",
+      desc: "Tasks & Deliverables",
+    },
+    {
+      label: "Settlement & Review",
+      status:
+        project.status === "completed"
+          ? "completed"
+          : invoice?.status === "paid"
+          ? "completed"
+          : invoice
+          ? "current"
+          : "upcoming",
+      desc: project.status === "completed" ? "Settled via Razorpay" : "Milestone release",
+    },
+  ];
+
+  return (
+    <div className="bg-white rounded-3xl border border-slate-200/80 p-5 sm:p-6 shadow-xs mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 relative">
+        {steps.map((s, idx) => {
+          const isDone = s.status === "completed";
+          const isCurrent = s.status === "current";
+          return (
+            <div key={idx} className="relative flex items-center md:items-start gap-3">
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 transition-all ${
+                  isDone
+                    ? "bg-emerald-500 text-white shadow-xs shadow-emerald-500/20"
+                    : isCurrent
+                    ? "bg-blue-600 text-white shadow-xs shadow-blue-500/20 ring-4 ring-blue-100 animate-pulse"
+                    : "bg-slate-100 text-slate-400"
+                }`}
+              >
+                {isDone ? <CheckCircle size={18} /> : idx + 1}
+              </div>
+              <div className="min-w-0">
+                <p
+                  className={`text-xs font-bold truncate ${
+                    isDone
+                      ? "text-slate-900"
+                      : isCurrent
+                      ? "text-blue-600 font-extrabold"
+                      : "text-slate-400"
+                  }`}
+                >
+                  {s.label}
+                </p>
+                <p className="text-[11px] text-slate-400 truncate mt-0.5">{s.desc}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 // --- MAIN PAGE COMPONENT ---
 
 const ProjectDetail = () => {
@@ -544,6 +617,9 @@ const ProjectDetail = () => {
                 )}
               </div>
             </div>
+
+            {/* Interactive Milestone Progress Stepper */}
+            <ProjectProgressStepper project={project} invoice={project.invoice} />
 
             {/* Completed Reviews banner */}
             {project.status === "completed" && (
